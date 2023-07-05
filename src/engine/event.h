@@ -2,52 +2,61 @@
 
 #include <netinet/in.h>
 #include "../common.h"
+#include "../utils.h"
 
-enum OrderCategory
-{
-    NEW,
-    CANCEL,
-    TRADE,
-};
-
+// TODO: there shld be faster way of doing the serialization and deserialization
 struct MarketData
 {
+    enum OrderCategory
+    {
+        OPEN,
+        CANCEL,
+        CHANGE,
+        TRADE,
+        UNKNOWN,
+    };
+
     MarketData(const std::string &s)
     {
-        std::string delimiter = " ";
-        size_t start = 0, end = s.find(delimiter, start), delim_len = delimiter.length();
-        timestamp_ = std::stoull(s.substr(start, end - start));
-        start = end + delim_len;
-        end = s.find(delimiter, start);
-        order_id_ = s.substr(start, end - start);
-        start = end + delim_len;
-        end = s.find(delimiter, start);
-        symbol_ = s.substr(start, end - start);
-        start = end + delim_len;
-        end = s.find(delimiter, start);
-        is_buy_ = s.substr(start, end - start) == "BUY";
-        start = end + delim_len;
-        end = s.find(delimiter, start);
-        std::string substr = s.substr(start, end - start);
-        if (substr == "NEW")
+
+        std::vector<std::string> splits;
+        split(s, ' ', &splits);
+        if (splits.size() < 7 || splits.size() > 7)
         {
-            category_ = OrderCategory::NEW;
+            std::cerr << "[MarketData] invalid parsing\n";
+            return;
         }
-        else if ("CANCEL")
+
+        timestamp_ = std::stoull(splits[0]);
+        order_id_ = splits[1];
+        symbol_ = splits[2];
+        is_buy_ = splits[3] == "BUY";
+        if (splits[4] == "NEW")
+        {
+            category_ = OrderCategory::OPEN;
+        }
+        else if (splits[4] == "CANCEL")
         {
             category_ = OrderCategory::CANCEL;
         }
-        else
+        else if (splits[4] == "TRADE")
         {
             category_ = OrderCategory::TRADE;
         }
-        start = end + delim_len;
-        end = s.find(delimiter, start);
-        price_ = std::stod(s.substr(start, end - start));
-        start = end + delim_len;
-        quantity_ = std::stoi(s.substr(start));
+        else if (splits[4] == "CHANGE")
+        {
+            category_ = OrderCategory::CHANGE;
+        }
+        else
+        {
+            category_ = OrderCategory::UNKNOWN;
+        }
+        price_ = std::stod(splits[5]);
+        quantity_ = std::stoi(splits[6]);
     }
+
     ~MarketData() {}
+
     unsigned long long timestamp_;
     std::string order_id_, symbol_;
     bool is_buy_;

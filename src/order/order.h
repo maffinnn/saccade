@@ -11,13 +11,8 @@ public:
         SUBMITTED,
         REJECTED,
         ACCEPTED,
-        MODIFYREQUESTED,
-        MODIFYREJECTED,
         MODIFIED,
-        PARTIALFILLED,
         FILLED,
-        CANCELREQESTED,
-        CANCELREJECTED,
         CANCELLED,
         UNKNOWN
     };
@@ -30,7 +25,7 @@ public:
         is_buy_ = buy;
         price_ = price;
         quantity_ = quantity;
-        state_ = State::UNKNOWN;
+        state_.store(State::SUBMITTED);
     }
 
     Order(const Order &) = delete;
@@ -43,19 +38,15 @@ public:
     inline bool IsBuy() const { return is_buy_; }
     inline int Price() const { return price_; }
     inline int Quantity() const { return quantity_; }
-    inline bool Equals(Order *order) const
-    {
-        return id_ == order->ID() && is_buy_ == order->IsBuy() && price_ == order->Price();
-    }
-
-    inline bool Filled() const { return quantity_ == 0; }
-
-    void OnFill() { state_ = State::FILLED; }
-    void OnOpen() { state_ = State::ACCEPTED; }
-    void OnChange() { state_ = State::MODIFYREQUESTED; }
-    void OnTraded() { state_ = State::FILLED; }
-    void OnReject() { state_ = State::REJECTED; }
-    void OnCancel() { state_ = State::CANCELLED; }
+    inline bool Equals(Order *order) const { return id_ == order->ID() && is_buy_ == order->IsBuy() && price_ == order->Price(); }
+    // NOT USED
+    void OnFill() { state_.store(State::FILLED); }
+    void OnOpen() { state_.store(State::ACCEPTED); }
+    void OnChange() { state_.store(State::MODIFIED); }
+    void OnTrade() { state_.store(State::FILLED); }
+    // NOT USED
+    void OnReject() { state_.store(State::REJECTED); }
+    void OnCancel() { state_.store(State::CANCELLED); }
 
     friend std::ostream &operator<<(std::ostream &os, const Order &order)
     {
@@ -67,6 +58,35 @@ public:
         return os;
     }
 
+    friend std::ostream &operator<<(std::ostream &os, const std::atomic_int &state)
+    {
+        switch (state.load())
+        {
+        case Order::SUBMITTED:
+            os << "SUBMITTED";
+            break;
+        case Order::REJECTED:
+            os << "REJECTED";
+            break;
+        case Order::ACCEPTED:
+            os << "ACCEPTED";
+            break;
+        case Order::MODIFIED:
+            os << "MODIFIED";
+            break;
+        case Order::FILLED:
+            os << "FILLED";
+            break;
+        case Order::CANCELLED:
+            os << "CANCELLED";
+            break;
+        default:
+            os << "UNKNOWN";
+            break;
+        }
+        return os;
+    }
+
 private:
     std::string id_, exchange_;
     bool is_buy_;
@@ -74,5 +94,5 @@ private:
     int quantity_;
     std::string symbol_;
 
-    State state_;
+    std::atomic_int state_;
 };

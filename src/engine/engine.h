@@ -1,13 +1,13 @@
 #pragma once
 #include <vector>
 #include <thread>
-#include <map>
 
 #include "../common.h"
 #include "../config.h"
+#include "order_manager.h"
 #include "brokerage.h"
 #include "event.h"
-#include "../strategy/order_manager.h"
+#include "order_book.h"
 #include "../strategy/strategy.h"
 
 class Engine
@@ -18,14 +18,55 @@ public:
         thread_num_ = std::min(config.engine_config_.thread_num_, MAX_THREAD);
         mc_addr_str_ = config.engine_config_.mc_addr_str_;
         mc_port_ = config.engine_config_.mc_port_;
+
+        std::unordered_map<std::string, Brokerage *> brokers;
+        for (auto &[instrument, broker_config] : config.engine_config_.broker_configs_)
+        {
+            brokers[instrument] = new Brokerage(broker_config.name_, broker_config.host_addr_, broker_config.host_port_);
+        }
+        order_manager_ = new OrderManager(brokers);
     }
 
-    ~Engine() {}
-
-    void Init() {}
-    void RegisterStrategy(const std::string &instrument, Strategy *strategy)
+    ~Engine()
     {
-        strategies_.insert({instrument, strategy});
+        for (auto it = books_.begin(); it != books_.end(); it++)
+            delete it->second;
+        for (auto it = strategies_.begin(); it != strategies_.end(); it++)
+            delete it->second;
+        delete order_manager_;
+    }
+
+    void RegisterStrategy(Strategy *strategy)
+    {
+        strategy->SetOrderManager(order_manager_);
+        strategies_[strategy->Symbol()] = strategy;
+        if (strategies_.find(strategy->Symbol()) == strategies_.end())
+            std::cout << "ERROR: Unknown strategy\n";
+        if (books_.find(strategy->Symbol()) == books_.end())
+            books_[strategy->Symbol()] = new OrderBook(strategy->Symbol());
+        strategy->SetOrderBook(books_[strategy->Symbol()]);
+    }
+
+    void RegisterCallBack(const std::string &instrument, MarketData::OrderCategory type, std::function<void(const MarketData *)> fn)
+    {
+        event_subscribers_[instrument][type].push_back(fn);
+    }
+
+    void Init()
+    {
+        std::cout << "initializing..." << std::endl;
+        for (auto subscriber = strategies_.begin(); subscriber != strategies_.end(); subscriber++)
+        {
+            subscriber->second->Init();
+            std::string instrument = subscriber->first;
+            // 1:1 mapping of instrument to strategy, so it's okay
+            event_subscribers_[instrument][MarketData::OrderCategory::OPEN].push_back(std::bind(&OrderManager::OnOpen, order_manager_, std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::TRADE].push_back(std::bind(&OrderManager::OnTrade, order_manager_, std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::CANCEL].push_back(std::bind(&OrderManager::OnCancel, order_manager_, std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::OPEN].push_back(std::bind(&OrderBook::OnOpen, books_[instrument], std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::TRADE].push_back(std::bind(&OrderBook::OnTrade, books_[instrument], std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::CANCEL].push_back(std::bind(&OrderBook::OnCancel, books_[instrument], std::placeholders::_1));
+        }
     }
 
     void Run()
@@ -34,7 +75,7 @@ public:
         for (int t = 0; t < thread_num_; t++)
         {
             Event *event = &events_[t];
-            SetupUPD(event);
+            SetUpUPD(event);
             threads_.push_back(std::thread(&Engine::EventLoopDispatcher, this, event));
         }
 
@@ -47,7 +88,7 @@ public:
     void Shutdown()
     {
 
-        std::cout << "Shutting down..." << std::endl;
+        std::cout << "shutting down..." << std::endl;
         for (int t = 0; t < thread_num_; t++)
         {
             /* send a DROP MEMBERSHIP message via setsockopt */
@@ -69,38 +110,45 @@ private:
             if ((recv_len = Recv(event)) > 0)
             {
                 MarketData data(std::string(event->buffer_));
-                switch (data.category_)
+                auto subscribers = event_subscribers_.find(data.symbol_);
+                if (subscribers == event_subscribers_.end())
                 {
-                case NEW:
-                    break;
-                case CANCEL:
-                    break;
-                case TRADE:
-                    break;
+                    std::cout << "subscriber not found" << std::endl;
+                    continue;
+                }
+                auto hanlders = (subscribers->second).find(data.category_);
+                if (hanlders == subscribers->second.end())
+                {
+                    std::cout << "hanlders not found" << std::endl;
+                    continue;
+                }
+                for (auto fn : hanlders->second)
+                {
+                    std::cout << "callbacks" << std::endl;
+                    fn(&data);
                 }
             }
         }
     }
-
-    void SetupUPD(Event *event)
+    void SetUpUPD(Event *event)
     {
         int sockfd;
         if ((sockfd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0)
         {
-            perror("socket() failed");
+            perror("[Engine::SetUpUDP] socket() failed");
             exit(1);
         }
         int option = 1;
         if ((setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option))) < 0)
         {
-            perror("setsockopt(SO_REUSEADDR) failed");
+            perror("[Engine::SetUpUDP] setsockopt(SO_REUSEADDR) failed");
             exit(1);
         }
         // default reuse port
         int reuseport = 1;
         if ((setsockopt(sockfd, SOL_SOCKET, SO_REUSEPORT, &reuseport, sizeof(reuseport))) < 0)
         {
-            perror("setsockopt(SO_REUSEPORT) failed");
+            perror("[Engine::SetUpUDP] setsockopt(SO_REUSEPORT) failed");
             exit(1);
         }
 
@@ -108,7 +156,7 @@ private:
         event->mc_req_.imr_interface.s_addr = htonl(INADDR_ANY);
         if ((setsockopt(sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, (void *)&event->mc_req_, sizeof(event->mc_req_))) < 0)
         {
-            perror("setsockopt() failed");
+            perror("[Engine::SetUpUDP] setsockopt() failed");
             exit(1);
         }
 
@@ -117,11 +165,12 @@ private:
         event->mc_addr_.sin_port = htons(mc_port_);
         if ((bind(sockfd, (struct sockaddr *)&event->mc_addr_, sizeof(event->mc_addr_))) < 0)
         {
-            perror("bind() failed");
+            perror("[Engine::SetUpUDP] bind() failed");
             exit(1);
         }
         event->fd_ = sockfd;
     }
+
     int Recv(Event *event)
     {
         /* Blocking recv. */
@@ -130,11 +179,10 @@ private:
         int recv_len = recvfrom(event->fd_, event->buffer_, sizeof(event->buffer_), 0, (struct sockaddr *)&from_addr, &from_len);
         if (recv_len < 0)
         {
-            perror("recvfrom() failed");
+            perror("[Engine::Recv] ecvfrom() failed");
             exit(1);
         }
-        printf("Received %d bytes from %s: ", recv_len, inet_ntoa(from_addr.sin_addr));
-        // not sure about the conversion, using codec or protobuf would be faster
+        printf("Received %d bytes from %s\n", recv_len, inet_ntoa(from_addr.sin_addr));
         return recv_len;
     }
 
@@ -144,6 +192,9 @@ private:
     int mc_port_;
     Event events_[MAX_THREAD];
     // instrument : strategy
-    // allow multiple {instrument, strategy} pair
-    std::multimap<std::string, Strategy *> strategies_;
+    std::unordered_map<std::string, Strategy *> strategies_;
+    typedef std::unordered_map<MarketData::OrderCategory, std::vector<std::function<void(const MarketData *)>>> SubscriptionList;
+    std::unordered_map<std::string, SubscriptionList> event_subscribers_;
+    std::unordered_map<std::string, OrderBook *> books_;
+    OrderManager *order_manager_;
 };

@@ -6,5 +6,8 @@ class RiskManager
 public:
     RiskManager() {}
     ~RiskManager() {}
-    float CalculateRiskScore() {}
+    float CalculateRiskScore()
+    {
+        return 0.0;
+    }
 };

@@ -3,42 +3,43 @@
 #include <string>
 #include <iostream>
 
-#include "order_manager.h"
+#include "../engine/order_manager.h"
 #include "risk_manager.h"
 
 class Strategy
 {
 public:
-    Strategy(const std::string &symbol, Brokerage *broker)
+    Strategy(const std::string &name, const std::string &symbol)
     {
+        name_ = name;
         symbol_ = symbol;
-        order_manager_ = new OrderManager(broker);
     }
 
     ~Strategy() {}
+    void SetOrderBook(OrderBook *order_book)
+    {
+        order_book_ = order_book;
+    }
 
+    void SetOrderManager(OrderManager *order_manager)
+    {
+        order_manager_ = order_manager;
+    }
+
+    std::string Name() const { return name_; }
+    std::string Symbol() const { return symbol_; }
     virtual void Init() = 0;
-    // OnFill: Called when an order is filled
-    virtual void OnFill() = 0;
     // OnOpen: Called when a new order occurs
-    virtual void OnOpen() = 0;
+    virtual void OnOpen(const MarketData *) = 0;
     // OnChange: Called when an order is modified
-    virtual void OnChange() = 0;
-    // onHalt: Called when trading is halted
-    virtual void onHalt() = 0;
+    virtual void OnChange(const MarketData *) = 0;
+    // [NOT USED] OnHalt: Called when trading is halted
+    virtual void OnHalt(const MarketData *) = 0;
     // OnTraded: called when a strategy's order is bought or sold
-    virtual void OnTraded() = 0;
-    // OnBought: called when a strategy's order is bought
-    virtual void OnBought() = 0;
-    // OnSold: called when a strategy's order is sold
-    virtual void OnSold() = 0;
-    // OnReceived: called when a strategy's order is received
-    virtual void OnReceived() = 0;
-    // OnRejected: called when a strategy's order is rejected
-    virtual void OnRejected() = 0;
-    // OnCanceled: called when a strategy's order is canceled
-    virtual void OnCancelled() = 0;
-    // OnExit: Called when the program shuts down
+    virtual void OnTrade(const MarketData *) = 0;
+    // OnCancelled: called when a strategy's order is canceled
+    virtual void OnCancel(const MarketData *) = 0;
+    // [NOT USED] OnExit: Called when the program shuts down
     virtual void OnExit() = 0;
 
     void NewOrder(bool buy, double price, int quantity)
@@ -56,8 +57,13 @@ public:
         order_manager_->CloseAll();
     }
 
+    OrderManager *GetOrderManager() { return order_manager_; }
+    OrderBook *GetOrderBook() { return order_book_; }
+    RiskManager *GetRiskManager() { return risk_manager_; }
+
 private:
-    std::string symbol_;
+    std::string symbol_, name_;
+    OrderBook *order_book_;
     OrderManager *order_manager_;
     RiskManager *risk_manager_;
 };
