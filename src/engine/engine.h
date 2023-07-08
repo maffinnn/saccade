@@ -40,8 +40,6 @@ public:
     {
         strategy->SetOrderManager(order_manager_);
         strategies_[strategy->Symbol()] = strategy;
-        if (strategies_.find(strategy->Symbol()) == strategies_.end())
-            std::cout << "ERROR: Unknown strategy\n";
         if (books_.find(strategy->Symbol()) == books_.end())
             books_[strategy->Symbol()] = new OrderBook(strategy->Symbol());
         strategy->SetOrderBook(books_[strategy->Symbol()]);
@@ -54,11 +52,15 @@ public:
 
     void Init()
     {
+
         std::cout << "initializing..." << std::endl;
         for (auto subscriber = strategies_.begin(); subscriber != strategies_.end(); subscriber++)
         {
             subscriber->second->Init();
             std::string instrument = subscriber->first;
+            event_subscribers_[instrument][MarketData::OrderCategory::OPEN].push_back(std::bind(&Strategy::OnOpen, subscriber->second, std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::TRADE].push_back(std::bind(&Strategy::OnTrade, subscriber->second, std::placeholders::_1));
+            event_subscribers_[instrument][MarketData::OrderCategory::CANCEL].push_back(std::bind(&Strategy::OnCancel, subscriber->second, std::placeholders::_1));
             // 1:1 mapping of instrument to strategy, so it's okay
             event_subscribers_[instrument][MarketData::OrderCategory::OPEN].push_back(std::bind(&OrderManager::OnOpen, order_manager_, std::placeholders::_1));
             event_subscribers_[instrument][MarketData::OrderCategory::TRADE].push_back(std::bind(&OrderManager::OnTrade, order_manager_, std::placeholders::_1));
@@ -124,7 +126,6 @@ private:
                 }
                 for (auto fn : hanlders->second)
                 {
-                    std::cout << "callbacks" << std::endl;
                     fn(&data);
                 }
             }
