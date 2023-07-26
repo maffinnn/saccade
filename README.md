@@ -4,7 +4,7 @@
 
 > NOTE: only tested and verified locally on MAC M1 chip. No guarantee runnable on linux machine though the syscalls used are transferable (I'm sorry not enough time). 
 >
-> **Watch the screen recording for further verification**
+> **Watch the screen recording(.mp4) for further verification**
 
 ### 1.1 build & run trading engine locally
 
